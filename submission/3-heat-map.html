@@ -47,7 +47,7 @@
             .style("font-family", "sans-serif")
 
         // Load and process data
-        d3.csv("/vgsales.csv").then(data => {
+        d3.csv("vgsales.csv").then(data => {
             // Parse data
             data.forEach(d => {
                 d.year = +d.Year
