@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <title>Racing Bar</title>
+</head>
+
+<body>
+    <div id="bar-container"></div>
+    <script type="module">
+        // Set dimensions and margins for the chart
+        const MAX_WIDTH = 1000
+        const MAX_HEIGHT = 600
+
+        const margin = {
+            top: 40, right: 200, bottom: 40, left: 250
+        }
+        const width = MAX_WIDTH - margin.left - margin.right
+        const height = MAX_HEIGHT - margin.top - margin.bottom
+
+        // Set up x and y scales
+        const x = d3.scaleLinear().range([0, width])
+        const y = d3.scaleBand().range([0, height]).padding(0.2)
+
+        // Color
+        const colorScale = d3.scaleOrdinal(d3.schemeCategory10)
+        const colorMap = new Map()
+
+        // Create SVG element and append it to the bar container
+
+        const svg = d3.select('#bar-container')
+            .append("svg")
+            .attr("width", MAX_WIDTH)
+            .attr("height", MAX_HEIGHT)
+            .append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`)
+
+        // Set up x and y axes
+        const xAxis = svg.append("g")
+            .attr("class", "x-axis")
+            .attr("transform", `translate(0,${height})`)
+
+        const yAxis = svg.append("g")
+            .attr("class", "y-axis")
+
+        // Set up title (changes for each year)
+        const title = svg.append('text')
+            .attr("class", "year-label")
+            .attr("x", width / 2)
+            .attr("y", margin.top / 10 - 5)
+            .attr("text-anchor", "middle")
+            .attr("font-size", "20px")
+            .attr("font-family", "sans-serif")
+
+        // Set up legend
+        const legend = svg.append("g")
+            .attr("class", "legend")
+            .attr("transform", `translate(${width + 70}, 30)`) // Positioned in right margin
+
+        legend.append("text")
+            .attr("class", "legend-title")
+            .attr("x", 0)
+            .attr("y", -10)
+            .text("Publishers")
+            .style("font-size", "14px")
+            .style("font-weight", "bold")
+            .style("font-family", "sans-serif")
+
+        // Load and process data + animation
+        d3.csv("vgsales.csv").then(data => {
+            // Parse data
+            data.forEach(d => {
+                d.year = +d.Year
+                d.globalSales = +d.Global_Sales
+                d.FullName = getFullName(d)
+            })
+
+            // Remove entries with null values
+            data = data.filter(d => !isNaN(d.year) && !isNaN(d.globalSales))
+
+            // Remove data from 2017 onwards (not enough data)
+            data = data.filter(d => d.year < 2017)
+
+            // Get array of sorted years
+            const allYears = Array.from(new Set(data.map(d => d.year))).sort(d3.ascending)
+
+            let yearIdx = 0
+            updateChart(data, allYears[yearIdx])
+
+            setInterval(() => {
+                yearIdx = (yearIdx + 1) % allYears.length
+                updateChart(data, allYears[yearIdx])
+                // console.log("update!", years[yearIdx])
+            }, 1000)
+        }).catch(err => {
+            console.error("Error encountered:", err)
+        })
+
+        function updateChart(data, year) {
+            // Update year in title to given year
+            title.text(`Best-selling Games with Release Year up to ${year}`)
+
+            // Get all games up to and including given year
+            // Sort and get top 10 games
+            const games = data.filter(d => d.year <= year)
+                .sort((a, b) => b.globalSales - a.globalSales)
+                .slice(0, 10)
+
+            // colors
+            games.forEach(d => {
+                if (d.Publisher !== null && !colorMap.has(d.Publisher.toLowerCase())) {
+                    colorMap.set(d.Publisher.toLowerCase(), colorScale(d.Publisher.toLowerCase()))
+                }
+            })
+
+            // console.log(colorMap.size)
+
+            // Update domain for aces
+            x.domain([0, d3.max(games, d => d.globalSales)])
+            y.domain(games.map(d => d.FullName))
+
+            // Update axes
+            xAxis.transition()
+                .duration(500)
+                .call(d3.axisBottom(x)
+                    .ticks(10)
+                    .tickFormat(s => `${s}M`)) // sales in millions
+
+            yAxis.transition()
+                .duration(500)
+                .call(d3.axisLeft(y))
+
+            // Update actual bars
+            const bars = svg.selectAll(".bar")
+                .data(games, d => d.FullName)
+
+            bars.exit()
+                .transition()
+                .duration(500)
+                .attr('width', 0) // 0 for shrinking transition
+                .remove()
+
+            bars.enter()
+                .append("rect")
+                .attr("class", "bar")
+                .attr("y", d => y(d.FullName))
+                .attr("width", 0) // 0 for growing transition
+                .attr("height", y.bandwidth())
+                .attr('fill', d => getBarColor(d))
+                // merge with previous transition
+                .merge(bars)
+                .transition()
+                .duration(500)
+                .attr("y", d => y(d.FullName))
+                .attr("width", d => x(d.globalSales))
+                .attr("height", y.bandwidth())
+
+            // Update sales labels
+            const labels = svg.selectAll(".label")
+                .data(games, d => d.FullName)
+
+            labels.exit().remove()
+
+            labels.enter()
+                .append("text")
+                .attr("class", "label")
+                .attr("y", d => y(d.FullName) + y.bandwidth() / 2)
+                .attr("x", 5)
+                // merge with previous transition
+                .merge(labels)
+                .transition()
+                .duration(500)
+                .attr("x", d => x(d.globalSales) + 5)
+                .attr("y", d => y(d.FullName) + y.bandwidth() / 2)
+                .text(d => `${d.globalSales}M`)
+                .style("font-family", "sans-serif")
+
+            updateLegend(games)
+        }
+
+        function updateLegend(games) {
+            const uniquePublishers = Array.from(new Set(games.map(d => d.Publisher.toLowerCase())))
+                .map(lower => ({
+                    lower: lower,
+                    original: games.find(d => d.Publisher.toLowerCase() === lower).Publisher
+                }))
+                .sort((a, b) => a.original.localeCompare(b.original))
+
+            const legendItems = legend.selectAll(".legend-item")
+                .data(uniquePublishers, d => d.lower)
+
+            legendItems.exit().remove()
+
+            const enterSelection = legendItems.enter()
+                .append("g")
+                .attr("class", "legend-item")
+                .attr("transform", (d, i) => `translate(0, ${i * 20})`)
+
+            enterSelection.append("rect")
+                .attr("width", 15)
+                .attr("height", 15)
+                .attr("fill", d => colorMap.get(d.lower))
+
+            enterSelection.append("text")
+                .attr("x", 20)
+                .attr("y", 7.5)
+                .style("dominant-baseline", "central")
+                .text(d => d.original)
+                .style("font-size", "12px")
+                .style("font-family", "sans-serif")
+
+            legendItems.merge(enterSelection)
+                .transition()
+                .duration(500)
+                .attr("transform", (d, i) => `translate(0, ${i * 20})`)
+        }
+
+        function getFullName(datum) {
+            return `${datum.Name} (${datum.Platform}, ${datum.Year})`
+        }
+
+        function getBarColor(datum) {
+            if (datum.Publisher === null || !colorMap.has(datum.Publisher.toLowerCase())) {
+                return "gray"
+            }
+
+            return colorMap.get(datum.Publisher.toLowerCase())
+        }
+    </script>
+</body>
+
+</html>
